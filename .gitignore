@@ -1,0 +1,17 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars
+
+# Python / Lambda builds
+__pycache__/
+.venv/
+*.zip
+
+# macOS
+.DS_Store
+
+# Local session notes
+handoff.md
