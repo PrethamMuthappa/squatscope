@@ -1,5 +1,6 @@
 locals {
-  repo         = "PrethamMuthappa/squatscope"
+  # GitHub OIDC sub claim uses owner/repo with immutable numeric IDs
+  repo         = "PrethamMuthappa@98420696/squatscope@1431937389"
   state_bucket = "squatscope-tfstate-405134483173"
 }
 
