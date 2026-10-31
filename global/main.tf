@@ -93,3 +93,31 @@ resource "aws_iam_role_policy_attachment" "deploy_admin" {
   role       = aws_iam_role.deploy.name
   policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
 }
+
+# Container warehouse for the scorer Lambda image
+resource "aws_ecr_repository" "scorer" {
+  name                 = "squatscope-scorer"
+  image_tag_mutability = "IMMUTABLE" # a tag always points at the same image
+
+  image_scanning_configuration {
+    scan_on_push = true # check each new image for known vulnerabilities
+  }
+}
+
+# Keep storage costs near zero: only the 10 newest images are kept
+resource "aws_ecr_lifecycle_policy" "scorer" {
+  repository = aws_ecr_repository.scorer.name
+
+  policy = jsonencode({
+    rules = [{
+      rulePriority = 1
+      description  = "Keep only the 10 most recent images"
+      selection = {
+        tagStatus   = "any"
+        countType   = "imageCountMoreThan"
+        countNumber = 10
+      }
+      action = { type = "expire" }
+    }]
+  })
+}
