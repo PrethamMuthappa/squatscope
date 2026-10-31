@@ -5,6 +5,14 @@ on:
     paths:
       - "envs/**"
       - "modules/**"
+      - "site/**"
+      - ".github/workflows/terraform.yml"
+  push:
+    branches: [main]
+    paths:
+      - "envs/**"
+      - "modules/**"
+      - "site/**"
       - ".github/workflows/terraform.yml"
 
 permissions:
@@ -12,8 +20,14 @@ permissions:
   contents: read
   pull-requests: write  # lets the job comment the plan on the PR
 
+# Never run two plans/applies against dev at the same time
+concurrency:
+  group: terraform-dev
+  cancel-in-progress: false
+
 jobs:
   plan:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -25,6 +39,7 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.16.7
+          terraform_wrapper: false
 
       - uses: aws-actions/configure-aws-credentials@v5
         with:
@@ -56,3 +71,38 @@ jobs:
             echo '```'
           } > comment.md
           gh pr comment ${{ github.event.pull_request.number }} --body-file comment.md
+
+  apply:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: envs/dev
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.16.7
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Init
+        run: terraform init -input=false
+
+      - name: Apply
+        run: terraform apply -input=false -auto-approve
+
+      - name: Upload site
+        run: aws s3 sync ../../site "s3://$(terraform output -raw site_bucket)" --delete
+
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "$(terraform output -raw distribution_id)" \
+            --paths "/*"

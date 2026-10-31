@@ -58,3 +58,38 @@ resource "aws_iam_role_policy" "plan_lock" {
   role   = aws_iam_role.plan.id
   policy = data.aws_iam_policy_document.plan_lock.json
 }
+
+# Only workflows running on the main branch of this repo may assume the deploy role
+data "aws_iam_policy_document" "deploy_trust" {
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [aws_iam_openid_connect_provider.github.arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:sub"
+      values   = ["repo:${local.repo}:ref:refs/heads/main"]
+    }
+  }
+}
+
+resource "aws_iam_role" "deploy" {
+  name               = "squatscope-github-deploy"
+  assume_role_policy = data.aws_iam_policy_document.deploy_trust.json
+}
+
+# Apply creates and changes resources across many services; scoped down later
+resource "aws_iam_role_policy_attachment" "deploy_admin" {
+  role       = aws_iam_role.deploy.name
+  policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
+}
