@@ -3,6 +3,7 @@ name: terraform
 on:
   pull_request:
     paths:
+      - "app/**"
       - "envs/**"
       - "modules/**"
       - "site/**"
@@ -10,6 +11,7 @@ on:
   push:
     branches: [main]
     paths:
+      - "app/**"
       - "envs/**"
       - "modules/**"
       - "site/**"
@@ -25,6 +27,10 @@ concurrency:
   group: terraform-dev
   cancel-in-progress: false
 
+env:
+  AWS_REGION: us-east-1
+  ECR_REPO: squatscope-scorer
+
 jobs:
   plan:
     if: github.event_name == 'pull_request'
@@ -36,6 +42,18 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Unit tests
+        working-directory: app/scorer
+        run: python -m unittest -v
+
+      # Image tag = git hash of the scorer folder: same code, same tag
+      - name: Image tag
+        run: echo "IMAGE_TAG=$(git rev-parse HEAD:app/scorer)" >> "$GITHUB_ENV"
+
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.16.7
@@ -44,7 +62,7 @@ jobs:
       - uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
-          aws-region: us-east-1
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Format check
         run: terraform fmt -check -recursive ../..
@@ -57,7 +75,7 @@ jobs:
 
       - name: Plan
         run: |
-          terraform plan -input=false -no-color -out=tfplan
+          terraform plan -input=false -no-color -var "scorer_image_tag=$IMAGE_TAG" -out=tfplan
           terraform show -no-color tfplan > plan.txt
 
       - name: Comment plan on PR
@@ -66,6 +84,7 @@ jobs:
         run: |
           {
             echo "### Terraform plan: dev"
+            echo "Scorer image tag: \`$IMAGE_TAG\`"
             echo '```'
             cat plan.txt
             echo '```'
@@ -82,6 +101,17 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Unit tests
+        working-directory: app/scorer
+        run: python -m unittest -v
+
+      - name: Image tag
+        run: echo "IMAGE_TAG=$(git rev-parse HEAD:app/scorer)" >> "$GITHUB_ENV"
+
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.16.7
@@ -90,13 +120,31 @@ jobs:
       - uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: us-east-1
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Tags are immutable, so only build when this code version isn't in ECR yet
+      - name: Build and push image
+        working-directory: app/scorer
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          if aws ecr describe-images --repository-name "$ECR_REPO" --image-ids imageTag="$IMAGE_TAG" >/dev/null 2>&1; then
+            echo "Image $IMAGE_TAG already in ECR, skipping build"
+          else
+            # Lambda needs a plain image manifest, not a provenance attestation index
+            docker build --provenance=false -t "$REGISTRY/$ECR_REPO:$IMAGE_TAG" .
+            docker push "$REGISTRY/$ECR_REPO:$IMAGE_TAG"
+          fi
 
       - name: Init
         run: terraform init -input=false
 
       - name: Apply
-        run: terraform apply -input=false -auto-approve
+        run: terraform apply -input=false -auto-approve -var "scorer_image_tag=$IMAGE_TAG"
 
       - name: Upload site
         run: aws s3 sync ../../site "s3://$(terraform output -raw site_bucket)" --delete
