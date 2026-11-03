@@ -15,3 +15,9 @@ variable "findings_table_name" {
 variable "findings_table_arn" {
   type = string
 }
+
+variable "alert_email" {
+  description = "Where alert emails go"
+  type        = string
+  sensitive   = true # keeps it out of plan output and PR comments
+}
