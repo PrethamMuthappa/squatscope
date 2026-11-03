@@ -13,3 +13,7 @@ output "brands_table" {
 output "findings_table" {
   value = aws_dynamodb_table.findings.name
 }
+
+output "findings_table_arn" {
+  value = aws_dynamodb_table.findings.arn
+}

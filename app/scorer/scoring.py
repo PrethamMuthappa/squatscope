@@ -67,6 +67,10 @@ def brand_signal(name, tokens, brands):
     return best
 
 
+def risk_level(score):
+    return "high" if score >= 70 else "medium" if score >= 40 else "low"
+
+
 def score_domain(domain, extra_brands=()):
     """Score a domain; extra_brands are user-added brands to watch on top of BRANDS."""
     brands = list(dict.fromkeys(BRANDS + list(extra_brands)))
@@ -101,6 +105,5 @@ def score_domain(domain, extra_brands=()):
         reasons.append("has many hyphens")
 
     score = min(score, 100)
-    risk = "high" if score >= 70 else "medium" if score >= 40 else "low"
-    return {"domain": domain, "score": score, "risk": risk,
+    return {"domain": domain, "score": score, "risk": risk_level(score),
             "reasons": reasons or ["no warning signs found"]}
