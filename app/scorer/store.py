@@ -46,12 +46,43 @@ def add_brand(name):
 
 
 def save_finding(result):
-    """Keep the latest score per domain."""
+    """Save a manual /score result, unless the scan already tracks this domain in more detail."""
+    if not FINDINGS_TABLE:
+        return
+    from botocore.exceptions import ClientError
+    try:
+        _table(FINDINGS_TABLE).put_item(
+            Item={
+                **result,
+                "source": "manual",
+                "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            },
+            ConditionExpression="attribute_not_exists(#src) OR #src <> :scan",
+            ExpressionAttributeNames={"#src": "source"},
+            ExpressionAttributeValues={":scan": "scan"},
+        )
+    except ClientError as err:
+        if err.response["Error"]["Code"] != "ConditionalCheckFailedException":
+            raise
+
+
+def get_finding(domain):
+    if not FINDINGS_TABLE:
+        return None
+    return _table(FINDINGS_TABLE).get_item(Key={"domain": domain}).get("Item")
+
+
+def save_scan_finding(item):
     if FINDINGS_TABLE:
-        _table(FINDINGS_TABLE).put_item(Item={
-            **result,
-            "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        })
+        _table(FINDINGS_TABLE).put_item(Item=item)
+
+
+def list_tracked(brand):
+    """Domains a previous scan found for this brand."""
+    if not FINDINGS_TABLE:
+        return []
+    return sorted(i["domain"] for i in _scan_all(FINDINGS_TABLE)
+                  if i.get("source") == "scan" and i.get("brand") == brand)
 
 
 def list_findings(limit=50):
