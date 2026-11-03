@@ -49,10 +49,10 @@ def clean(domain):
     return domain
 
 
-def brand_signal(name, tokens):
+def brand_signal(name, tokens, brands):
     """Best brand-imitation signal for this name: (points, reason) or None."""
     best = None
-    for brand in BRANDS:
+    for brand in brands:
         if brand in name:
             hit = (35, f"contains the brand name '{brand}'")
         elif brand in normalize(name):
@@ -67,12 +67,14 @@ def brand_signal(name, tokens):
     return best
 
 
-def score_domain(domain):
+def score_domain(domain, extra_brands=()):
+    """Score a domain; extra_brands are user-added brands to watch on top of BRANDS."""
+    brands = list(dict.fromkeys(BRANDS + list(extra_brands)))
     domain = clean(domain)
     labels = domain.split(".")
     registered, tld = labels[-2], labels[-1]
 
-    if registered in BRANDS:
+    if registered in brands:
         return {"domain": domain, "score": 0, "risk": "low",
                 "reasons": [f"official '{registered}' domain"]}
 
@@ -80,7 +82,7 @@ def score_domain(domain):
     tokens = re.split(r"[.-]", name)
     score, reasons = 0, []
 
-    brand = brand_signal(name, tokens)
+    brand = brand_signal(name, tokens, brands)
     if brand:
         score += brand[0]
         reasons.append(brand[1])
