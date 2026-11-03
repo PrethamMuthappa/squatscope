@@ -15,4 +15,5 @@ module "scan" {
   image_tag           = var.scorer_image_tag
   findings_table_name = module.api.findings_table
   findings_table_arn  = module.api.findings_table_arn
+  alert_email         = var.alert_email
 }

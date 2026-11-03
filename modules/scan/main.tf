@@ -184,3 +184,34 @@ resource "aws_lambda_event_source_mapping" "scan_queue" {
 
   depends_on = [aws_iam_role_policy.enricher]
 }
+
+# ---------- Alerts: email when failed messages land in the DLQ ----------
+
+resource "aws_sns_topic" "alerts" {
+  name = "squatscope-${var.env}-alerts"
+}
+
+# AWS emails a confirmation link first; alerts only arrive after it's clicked
+resource "aws_sns_topic_subscription" "alerts_email" {
+  topic_arn = aws_sns_topic.alerts.arn
+  protocol  = "email"
+  endpoint  = var.alert_email
+}
+
+# Anything in the DLQ means a domain failed 3 times and needs a look
+resource "aws_cloudwatch_metric_alarm" "dlq_not_empty" {
+  alarm_name          = "squatscope-${var.env}-scan-dlq-not-empty"
+  alarm_description   = "Scan messages failed 3 times and were moved to the dead-letter queue"
+  namespace           = "AWS/SQS"
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  dimensions          = { QueueName = aws_sqs_queue.dlq.name }
+  statistic           = "Maximum"
+  period              = 300
+  evaluation_periods  = 1
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = [aws_sns_topic.alerts.arn] # email when it fills up
+  ok_actions    = [aws_sns_topic.alerts.arn] # and again when it's emptied
+}

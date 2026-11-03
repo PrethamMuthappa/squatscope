@@ -13,3 +13,7 @@ output "generator_function_name" {
 output "enricher_function_name" {
   value = aws_lambda_function.enricher.function_name
 }
+
+output "alerts_topic_arn" {
+  value = aws_sns_topic.alerts.arn
+}
