@@ -55,6 +55,16 @@ class AssessTest(unittest.TestCase):
         self.assertIn("registered 9 days ago", assess("acrne.com", "acme", young, None, NOW)["reasons"])
 
 
+class FindingEventTest(unittest.TestCase):
+    def test_event_is_defanged_and_readable(self):
+        armed = dict(PARKED, has_mail=True, resolves=True)
+        detail = json.loads(enricher.finding_event(assess("acrne.com", "acme", armed, None, NOW))["Detail"])
+        self.assertEqual(detail["defanged"], "acrne[.]com")
+        self.assertEqual(detail["status"], "new")
+        self.assertEqual(detail["changes_text"], "first time seen")
+        self.assertIn("can send email", detail["reasons_text"])
+
+
 class EnricherHandlerTest(unittest.TestCase):
     def test_bad_message_is_reported_as_failure(self):
         event = {"Records": [{"messageId": "m1", "body": "not json"}]}

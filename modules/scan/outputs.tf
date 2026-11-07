@@ -17,3 +17,11 @@ output "enricher_function_name" {
 output "alerts_topic_arn" {
   value = aws_sns_topic.alerts.arn
 }
+
+output "generator_function_arn" {
+  value = aws_lambda_function.generator.arn
+}
+
+output "findings_bus_name" {
+  value = aws_cloudwatch_event_bus.findings.name
+}
