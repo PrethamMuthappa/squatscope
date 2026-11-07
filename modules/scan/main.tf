@@ -122,7 +122,7 @@ resource "aws_iam_role_policy_attachment" "enricher_logs" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
-# Read from the scan queue, read/write findings
+# Read from the scan queue, read/write findings, publish finding events
 data "aws_iam_policy_document" "enricher" {
   statement {
     actions   = ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes"]
@@ -132,6 +132,11 @@ data "aws_iam_policy_document" "enricher" {
   statement {
     actions   = ["dynamodb:GetItem", "dynamodb:PutItem"]
     resources = [var.findings_table_arn]
+  }
+
+  statement {
+    actions   = ["events:PutEvents"]
+    resources = [aws_cloudwatch_event_bus.findings.arn]
   }
 }
 
@@ -162,6 +167,7 @@ resource "aws_lambda_function" "enricher" {
   environment {
     variables = {
       FINDINGS_TABLE = var.findings_table_name
+      EVENT_BUS_NAME = aws_cloudwatch_event_bus.findings.name
     }
   }
 
@@ -214,4 +220,103 @@ resource "aws_cloudwatch_metric_alarm" "dlq_not_empty" {
 
   alarm_actions = [aws_sns_topic.alerts.arn] # email when it fills up
   ok_actions    = [aws_sns_topic.alerts.arn] # and again when it's emptied
+}
+
+# ---------- Events: new or changed findings, and who gets told ----------
+
+# The enricher publishes every new or changed finding here; rules pick what matters
+resource "aws_cloudwatch_event_bus" "findings" {
+  name = "squatscope-${var.env}-findings"
+}
+
+# Only high-risk findings that are new or changed are worth an email
+resource "aws_cloudwatch_event_rule" "high_risk" {
+  name           = "squatscope-${var.env}-high-risk-finding"
+  description    = "New or changed findings with high risk"
+  event_bus_name = aws_cloudwatch_event_bus.findings.name
+
+  event_pattern = jsonencode({
+    source        = ["squatscope.scan"]
+    "detail-type" = ["Finding"]
+    detail = {
+      risk   = ["high"]
+      status = ["new", "changed"]
+    }
+  })
+}
+
+# Send matches to the alerts topic, reshaped into a readable email
+resource "aws_cloudwatch_event_target" "high_risk_email" {
+  rule           = aws_cloudwatch_event_rule.high_risk.name
+  event_bus_name = aws_cloudwatch_event_bus.findings.name
+  arn            = aws_sns_topic.alerts.arn
+
+  input_transformer {
+    input_paths = {
+      domain       = "$.detail.defanged"
+      brand        = "$.detail.brand"
+      score        = "$.detail.score"
+      status       = "$.detail.status"
+      changes      = "$.detail.changes_text"
+      reasons      = "$.detail.reasons_text"
+      first_seen   = "$.detail.first_seen"
+      last_changed = "$.detail.last_changed"
+    }
+    input_template = "\"[SquatScope] <domain> is <status> (risk <score>/100)\\n\\nWatched brand: <brand>\\nWhat changed: <changes>\\nWhy it's risky: <reasons>\\nFirst seen: <first_seen>\\nLast changed: <last_changed>\""
+  }
+}
+
+# Who may publish to the alerts topic: this account, CloudWatch alarms, and the rule above
+data "aws_caller_identity" "current" {}
+
+data "aws_iam_policy_document" "alerts_topic" {
+  statement {
+    sid       = "AccountOwner"
+    actions   = ["SNS:Publish", "SNS:Subscribe", "SNS:GetTopicAttributes", "SNS:SetTopicAttributes", "SNS:ListSubscriptionsByTopic"]
+    resources = [aws_sns_topic.alerts.arn]
+
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"]
+    }
+  }
+
+  statement {
+    sid       = "CloudWatchAlarms"
+    actions   = ["SNS:Publish"]
+    resources = [aws_sns_topic.alerts.arn]
+
+    principals {
+      type        = "Service"
+      identifiers = ["cloudwatch.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+  }
+
+  statement {
+    sid       = "HighRiskRule"
+    actions   = ["SNS:Publish"]
+    resources = [aws_sns_topic.alerts.arn]
+
+    principals {
+      type        = "Service"
+      identifiers = ["events.amazonaws.com"]
+    }
+
+    condition {
+      test     = "ArnEquals"
+      variable = "aws:SourceArn"
+      values   = [aws_cloudwatch_event_rule.high_risk.arn]
+    }
+  }
+}
+
+resource "aws_sns_topic_policy" "alerts" {
+  arn    = aws_sns_topic.alerts.arn
+  policy = data.aws_iam_policy_document.alerts_topic.json
 }

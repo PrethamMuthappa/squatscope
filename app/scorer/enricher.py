@@ -8,6 +8,7 @@ failed attempts SQS moves a message to the dead-letter queue.
 """
 
 import json
+import os
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -19,6 +20,7 @@ from scoring import risk_level, score_domain
 DOH_URL = "https://cloudflare-dns.com/dns-query"
 RDAP_URL = "https://rdap.org/domain/"
 NXDOMAIN = 3
+EVENT_BUS = os.environ.get("EVENT_BUS_NAME")
 
 
 def dns(name, rtype):
@@ -112,12 +114,52 @@ def assess(domain, brand, facts, previous, now):
     }
 
 
+def defang(domain):
+    """'evil.com' -> 'evil[.]com', so nobody can click it in an email."""
+    return domain.replace(".", "[.]")
+
+
+def finding_event(item):
+    """EventBridge event for a new or changed finding. Rules on the bus decide who hears about it."""
+    return {
+        "Source": "squatscope.scan",
+        "DetailType": "Finding",
+        "EventBusName": EVENT_BUS,
+        "Detail": json.dumps({
+            "domain": item["domain"],
+            "defanged": defang(item["domain"]),
+            "brand": item["brand"],
+            "score": item["score"],
+            "risk": item["risk"],
+            "status": item["status"],
+            # Plain-text versions, so the alert email reads well
+            "changes_text": "; ".join(item["changes"]) or "first time seen",
+            "reasons_text": "; ".join(item["reasons"]),
+            "first_seen": item["first_seen"],
+            "last_changed": item["last_changed"],
+        }),
+    }
+
+
+def publish(item):
+    if not EVENT_BUS:  # unit tests and local runs
+        return
+    import boto3
+    resp = boto3.client("events").put_events(Entries=[finding_event(item)])
+    if resp.get("FailedEntryCount"):
+        raise RuntimeError(f"EventBridge rejected the event: {resp['Entries']}")
+
+
 def process(message):
     domain, brand = message["domain"], message["brand"]
     facts = lookup(domain)
     if facts is None:
         return "unregistered"
     item = assess(domain, brand, facts, store.get_finding(domain), datetime.now(timezone.utc))
+    # Publish before saving: if the save then fails, the retry sends a duplicate alert.
+    # Saving first would be worse: the retry would see "unchanged" and the alert would be lost.
+    if item["status"] in ("new", "changed"):
+        publish(item)
     store.save_scan_finding(item)
     log("domain checked", domain=domain, score=item["score"], status=item["status"])
     return item["status"]

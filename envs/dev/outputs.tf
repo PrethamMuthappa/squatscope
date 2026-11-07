@@ -25,3 +25,7 @@ output "scan_dlq_url" {
 output "generator_function_name" {
   value = module.scan.generator_function_name
 }
+
+output "state_machine_arn" {
+  value = module.automation.state_machine_arn
+}

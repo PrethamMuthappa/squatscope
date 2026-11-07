@@ -17,3 +17,11 @@ module "scan" {
   findings_table_arn  = module.api.findings_table_arn
   alert_email         = var.alert_email
 }
+
+module "automation" {
+  source                 = "../../modules/automation"
+  env                    = "dev"
+  brands_table_name      = module.api.brands_table
+  generator_function_arn = module.scan.generator_function_arn
+  alerts_topic_arn       = module.scan.alerts_topic_arn
+}
