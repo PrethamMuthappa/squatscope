@@ -45,6 +45,11 @@ def add_brand(name):
         })
 
 
+def remove_brand(name):
+    if BRANDS_TABLE:
+        _table(BRANDS_TABLE).delete_item(Key={"name": name})
+
+
 def save_finding(result):
     """Save a manual /score result, unless the scan already tracks this domain in more detail."""
     if not FINDINGS_TABLE:
@@ -85,9 +90,11 @@ def list_tracked(brand):
                   if i.get("source") == "scan" and i.get("brand") == brand)
 
 
-def list_findings(limit=50):
+def list_findings(limit=100):
+    """Riskiest first; newest first among equal scores."""
     if not FINDINGS_TABLE:
         return []
     items = sorted(_scan_all(FINDINGS_TABLE), key=lambda i: i["checked_at"], reverse=True)
+    items.sort(key=lambda i: i["score"], reverse=True)  # stable sort keeps the date order
     # DynamoDB returns numbers as Decimal, which json can't serialise
     return [{**i, "score": int(i["score"])} for i in items[:limit]]

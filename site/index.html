@@ -1,8 +1,256 @@
 <!doctype html>
-<html>
-  <head><meta charset="utf-8"><title>SquatScope</title></head>
-  <body>
-    <h1>SquatScope</h1>
-    <p>Typosquat monitor, coming soon. Served by CloudFront from a private S3 bucket.</p>
-  </body>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SquatScope</title>
+  <style>
+    :root {
+      --bg: #f6f7f9; --card: #fff; --text: #1d2330; --muted: #667085; --line: #e4e7ec;
+      --accent: #5b4bdb; --high: #c4320a; --high-bg: #fef3f2; --med: #b54708; --med-bg: #fffaeb;
+      --low: #067647; --low-bg: #ecfdf3;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f1218; --card: #181c25; --text: #e6e8ec; --muted: #98a2b3; --line: #2a303c;
+        --accent: #8f83ff; --high: #ff8a70; --high-bg: #3a1c17; --med: #fdb022; --med-bg: #362a12;
+        --low: #47cd89; --low-bg: #12301f;
+      }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+    header { display: flex; align-items: center; gap: 12px; padding: 14px 20px; background: var(--card); border-bottom: 1px solid var(--line); }
+    header h1 { font-size: 18px; margin: 0; flex: 1; }
+    header h1 span { color: var(--muted); font-weight: 400; font-size: 14px; margin-left: 8px; }
+    main { max-width: 1100px; margin: 0 auto; padding: 20px 16px 60px; display: grid; gap: 16px; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
+    .card h2 { font-size: 15px; margin: 0 0 10px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .grid2 { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+    input { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--text); font: inherit; }
+    button { padding: 8px 14px; border: 1px solid var(--accent); border-radius: 7px; background: var(--accent); color: #fff; font: inherit; cursor: pointer; }
+    button.ghost { background: transparent; color: var(--accent); }
+    button:disabled { opacity: .5; cursor: default; }
+    .muted { color: var(--muted); font-size: 13px; }
+    .badge { display: inline-block; min-width: 64px; text-align: center; padding: 2px 8px; border-radius: 99px; font-size: 13px; font-weight: 600; }
+    .high { color: var(--high); background: var(--high-bg); }
+    .medium { color: var(--med); background: var(--med-bg); }
+    .low { color: var(--low); background: var(--low-bg); }
+    .chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid var(--line); border-radius: 99px; margin: 3px 4px 3px 0; font-size: 13px; }
+    .chip button { padding: 0 4px; border: 0; background: none; color: var(--muted); }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-weight: 500; font-size: 13px; }
+    td.domain { font-family: ui-monospace, Menlo, monospace; word-break: break-all; }
+    .table-wrap { overflow-x: auto; }
+    #msg { min-height: 20px; }
+    #login { max-width: 460px; margin: 80px auto; text-align: center; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>SquatScope <span>lookalike domain monitor</span></h1>
+    <button id="scan" class="hidden">Scan now</button>
+    <button id="logout" class="ghost hidden">Log out</button>
+  </header>
+
+  <section id="login" class="card hidden">
+    <h2>Log in to see your findings</h2>
+    <p class="muted">You'll need your password and the 6-digit code from your authenticator app.</p>
+    <button id="login-btn">Log in</button>
+  </section>
+
+  <main id="app" class="hidden">
+    <div id="msg" class="muted"></div>
+
+    <div class="grid2">
+      <section class="card">
+        <h2>Check a domain</h2>
+        <form id="score-form" class="row">
+          <input id="domain" placeholder="paypa1-secure-login.com" autocomplete="off" required>
+          <button>Score it</button>
+        </form>
+        <div id="score-result" class="muted" style="margin-top:10px"></div>
+      </section>
+
+      <section class="card">
+        <h2>Watched brands</h2>
+        <div id="brands" class="muted">Loading…</div>
+        <form id="brand-form" class="row" style="margin-top:8px">
+          <input id="brand" placeholder="acme" autocomplete="off" required>
+          <button>Watch</button>
+        </form>
+        <p class="muted" style="margin:8px 0 0">The daily scan (11:30 IST / 06:00 UTC) checks lookalikes of these brands.</p>
+      </section>
+    </div>
+
+    <section class="card">
+      <div class="row" style="justify-content:space-between">
+        <h2>Findings <span class="muted" id="count"></span></h2>
+        <button id="refresh" class="ghost">Refresh</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Domain</th><th>Risk</th><th>Brand</th><th>Status</th><th>Why</th><th>Last checked</th></tr></thead>
+          <tbody id="findings"><tr><td colspan="6" class="muted">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="config.js"></script>
+  <script>
+    const cfg = window.SQUATSCOPE;
+    const $ = (id) => document.getElementById(id);
+
+    // ---------- Login: Cognito hosted page, authorization code flow with PKCE ----------
+
+    const b64url = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes)))
+      .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+    const store = {
+      get: (k) => { try { return sessionStorage.getItem(k); } catch { return null; } },
+      set: (k, v) => { try { sessionStorage.setItem(k, v); } catch {} },
+      del: (k) => { try { sessionStorage.removeItem(k); } catch {} },
+    };
+
+    async function login() {
+      // PKCE: a random secret only this browser knows; Cognito gets its hash now, the secret later
+      const verifier = b64url(crypto.getRandomValues(new Uint8Array(32)));
+      const challenge = b64url(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)));
+      store.set("pkce", verifier);
+      const q = new URLSearchParams({
+        response_type: "code", client_id: cfg.clientId, redirect_uri: cfg.siteUrl,
+        scope: "openid email", code_challenge_method: "S256", code_challenge: challenge,
+      });
+      location.href = `${cfg.loginDomain}/oauth2/authorize?${q}`;
+    }
+
+    async function finishLogin(code) {
+      const resp = await fetch(`${cfg.loginDomain}/oauth2/token`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "authorization_code", client_id: cfg.clientId, code,
+          redirect_uri: cfg.siteUrl, code_verifier: store.get("pkce") || "",
+        }),
+      });
+      store.del("pkce");
+      history.replaceState(null, "", location.pathname); // drop ?code= from the address bar
+      if (!resp.ok) throw new Error("login failed, please try again");
+      const tokens = await resp.json();
+      store.set("token", tokens.access_token);
+      store.set("expires", String(Date.now() + tokens.expires_in * 1000));
+    }
+
+    function token() {
+      const t = store.get("token");
+      return t && Date.now() < Number(store.get("expires")) - 30000 ? t : null;
+    }
+
+    function logout() {
+      store.del("token"); store.del("expires");
+      const q = new URLSearchParams({ client_id: cfg.clientId, logout_uri: cfg.siteUrl });
+      location.href = `${cfg.loginDomain}/logout?${q}`;
+    }
+
+    // ---------- API calls ----------
+
+    async function api(method, path, body) {
+      const resp = await fetch(cfg.apiUrl + path, {
+        method,
+        headers: { authorization: `Bearer ${token()}`, ...(body && { "content-type": "application/json" }) },
+        body: body && JSON.stringify(body),
+      });
+      if (resp.status === 401) { showLogin(); throw new Error("please log in again"); }
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw Object.assign(new Error(data.error || `error ${resp.status}`), { data, status: resp.status });
+      return data;
+    }
+
+    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+    const defang = (d) => esc(d).replace(/\./g, "[.]"); // shown unclickable, on purpose
+    const badge = (score, risk) => `<span class="badge ${esc(risk)}">${esc(score)} ${esc(risk)}</span>`;
+    const when = (iso) => iso ? new Date(iso).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "";
+    const say = (text) => { $("msg").textContent = text; };
+
+    async function loadFindings() {
+      const { findings } = await api("GET", "/findings");
+      $("count").textContent = `(${findings.length}, riskiest first)`;
+      $("findings").innerHTML = findings.length ? findings.map((f) => `
+        <tr>
+          <td class="domain">${defang(f.domain)}</td>
+          <td>${badge(f.score, f.risk)}</td>
+          <td>${esc(f.brand || "manual")}</td>
+          <td>${esc(f.status || "checked")}${(f.changes || []).length ? `<div class="muted">${esc(f.changes.join(", "))}</div>` : ""}</td>
+          <td class="muted">${esc((f.reasons || []).join("; "))}</td>
+          <td class="muted">${when(f.checked_at)}</td>
+        </tr>`).join("") : `<tr><td colspan="6" class="muted">Nothing yet. Watch a brand and click Scan now.</td></tr>`;
+    }
+
+    async function loadBrands() {
+      const { custom } = await api("GET", "/brands");
+      $("brands").innerHTML = custom.length
+        ? custom.map((b) => `<span class="chip">${esc(b)} <button title="Stop watching" data-brand="${esc(b)}">✕</button></span>`).join("")
+        : "No brands yet.";
+    }
+
+    $("brands").addEventListener("click", async (e) => {
+      const name = e.target.dataset.brand;
+      if (!name || !confirm(`Stop watching "${name}"?`)) return;
+      try { await api("DELETE", `/brands/${encodeURIComponent(name)}`); await loadBrands(); }
+      catch (err) { say(err.message); }
+    });
+
+    $("brand-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      try {
+        await api("POST", "/brands", { name: $("brand").value.trim() });
+        $("brand").value = ""; await loadBrands();
+        say("Brand added. It's included from the next scan.");
+      } catch (err) { say(err.message); }
+    });
+
+    $("score-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const out = $("score-result");
+      out.textContent = "Scoring…";
+      try {
+        const r = await api("POST", "/score", { domain: $("domain").value.trim() });
+        out.innerHTML = `${badge(r.score, r.risk)} <span class="domain">${defang(r.domain)}</span><ul>${r.reasons.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`;
+        loadFindings();
+      } catch (err) { out.textContent = err.message; }
+    });
+
+    $("scan").addEventListener("click", async () => {
+      $("scan").disabled = true;
+      try {
+        await api("POST", "/scan");
+        say("Scan started. New results show up here in a couple of minutes (click Refresh).");
+      } catch (err) {
+        say(err.status === 429 ? `A scan ran recently. You can start another after ${when(err.data.retry_at)}.` : err.message);
+      } finally { setTimeout(() => { $("scan").disabled = false; }, 5000); }
+    });
+
+    $("refresh").addEventListener("click", () => loadFindings().catch((err) => say(err.message)));
+    $("login-btn").addEventListener("click", login);
+    $("logout").addEventListener("click", logout);
+
+    function showLogin() {
+      ["app", "scan", "logout"].forEach((id) => $(id).classList.add("hidden"));
+      $("login").classList.remove("hidden");
+    }
+
+    async function start() {
+      const code = new URLSearchParams(location.search).get("code");
+      if (code) await finishLogin(code).catch((err) => alert(err.message));
+      if (!token()) return showLogin();
+      ["app", "scan", "logout"].forEach((id) => $(id).classList.remove("hidden"));
+      await Promise.all([loadFindings(), loadBrands()]).catch((err) => say(err.message));
+    }
+
+    start();
+  </script>
+</body>
 </html>

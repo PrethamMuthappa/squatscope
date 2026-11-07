@@ -17,6 +17,7 @@ It's a real, useful security tool, and building it teaches you the AWS services 
 7. [Cost, and the mistakes that cost money](#7-cost-and-the-mistakes-that-cost-money)
 8. [Glossary](#8-glossary)
 9. [Why this is a good portfolio project](#9-why-this-is-a-good-portfolio-project)
+10. [What was built, and the design choices](#10-what-was-built-and-the-design-choices)
 
 ---
 
@@ -237,3 +238,46 @@ Build in order. Each phase ends with something working that you can show someone
 - **It covers what interviewers ask about:** serverless, queues, events, IAM, infrastructure as code and CI/CD.
 - **It shows good judgment:** it's cheap, secure by default, and your README can explain why each piece was chosen.
 - **It's close to cybersecurity work,** so it fits naturally if you're in or moving toward that field.
+
+---
+
+## 10. What was built, and the design choices
+
+Everything below is defined in Terraform in this repo and deployed by GitHub Actions.
+
+### Repo layout
+
+| Folder | What's in it |
+|---|---|
+| `bootstrap/` | The S3 bucket that holds Terraform's state. Applied once, by hand |
+| `global/` | GitHub OIDC trust, the plan and deploy roles, the ECR repository |
+| `modules/website` | Private S3 bucket + CloudFront, with AWS's managed security headers |
+| `modules/auth` | Cognito user pool (MFA required, no self sign-up) and the website's app client |
+| `modules/api` | HTTP API with a Cognito JWT authorizer, the API Lambda, the DynamoDB tables |
+| `modules/scan` | SQS queue + DLQ, generator and enricher Lambdas, the findings event bus, alert emails |
+| `modules/automation` | Step Functions workflow, daily schedule, "scan didn't run" alarm |
+| `envs/dev` | Wires the modules together for the dev environment |
+| `app/scorer` | Python code for all three Lambdas (one container image) |
+| `site/` | The single-page website |
+
+### Choices worth explaining
+
+- **One container image, three Lambdas.** The API, generator and enricher share the scoring code, so they ship as one image and each one just runs a different handler. The image tag is the git hash of `app/scorer`, so unchanged code is never rebuilt.
+- **No stored AWS keys.** GitHub proves who it is with OIDC. Pull requests get a read-only role (plan only); only `main` gets the deploy role.
+- **The queue is sized to the code.** The visibility timeout (6 min) is longer than the enricher's timeout, so a message never reappears while it's still being worked on. After 3 failures a message moves to the DLQ, and an alarm emails you.
+- **Failures are retried one domain at a time.** The enricher reports exactly which messages in a batch failed, so SQS retries only those.
+- **Duplicate messages are harmless.** Checking the same domain twice gives "unchanged" the second time, so it never triggers a second alert.
+- **Publish, then save.** The enricher sends the "new or changed" event before saving the finding. If saving fails, the retry sends a duplicate alert. Saving first would be worse: the retry would see "unchanged" and the alert would be lost.
+- **Events decide who gets told.** The enricher just announces findings. An EventBridge rule picks the high-risk new or changed ones and formats the email, so alert rules can change without touching code.
+- **Scans can't overlap.** Each run first checks whether another run is in progress and stops if one is.
+- **"Scan now" has a cooldown with no extra database.** Each manual run is named after the current 15-minute window, and Step Functions refuses a second run with the same name.
+- **A heartbeat, not just error alarms.** If no scan succeeds in 24 hours you get an email, which catches a schedule that silently stopped.
+- **Login is handled by Cognito.** The site uses Cognito's hosted login page with the authorization code flow + PKCE (a browser can't keep a client secret). Every API route checks the token, and CORS only allows the SquatScope website.
+- **Passive lookups only.** DNS over HTTPS, RDAP and certificate logs. Suspicious sites are never visited, and domains are shown defanged (`evil[.]com`).
+- **Cheap by design.** No VPC or NAT Gateway, pay-per-request DynamoDB, logs kept for 14 days, a rate-limited API, at most 2 enrichers running at a time.
+- **Secrets stay out of the public repo.** The alert email is a GitHub secret; the site's settings (API URL, login domain) are written by CI from Terraform outputs.
+
+### Not built (on purpose)
+
+Checkov in CI, a prod environment, and taking sites down. They're reasonable next steps, but they were left out to keep the project focused.
+

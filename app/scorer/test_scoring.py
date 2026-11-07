@@ -57,6 +57,17 @@ class HandlerTest(unittest.TestCase):
         body = json.loads(handler({"routeKey": "GET /brands"}, None)["body"])
         self.assertIn("paypal", body["builtin"])
 
+    def test_remove_brand_validates_name(self):
+        event = {"routeKey": "DELETE /brands/{name}", "pathParameters": {"name": "no!"}}
+        self.assertEqual(handler(event, None)["statusCode"], 400)
+
+    def test_remove_brand_ok(self):
+        event = {"routeKey": "DELETE /brands/{name}", "pathParameters": {"name": "Acme"}}
+        self.assertEqual(json.loads(handler(event, None)["body"]), {"removed": "acme"})
+
+    def test_scan_now_without_workflow_is_503(self):
+        self.assertEqual(handler({"routeKey": "POST /scan"}, None)["statusCode"], 503)
+
     def test_unknown_route_is_404(self):
         self.assertEqual(handler({"routeKey": "GET /nope"}, None)["statusCode"], 404)
 
