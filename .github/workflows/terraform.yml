@@ -147,6 +147,10 @@ jobs:
       - name: Apply
         run: terraform apply -input=false -auto-approve -var "scorer_image_tag=$IMAGE_TAG"
 
+      # The API URL and login settings come from Terraform, so they're never hard-coded
+      - name: Write site config
+        run: terraform output -raw site_config_js > ../../site/config.js
+
       - name: Upload site
         run: aws s3 sync ../../site "s3://$(terraform output -raw site_bucket)" --delete
 

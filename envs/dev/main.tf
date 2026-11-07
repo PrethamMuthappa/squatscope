@@ -3,10 +3,20 @@ module "website" {
   env    = "dev"
 }
 
+module "auth" {
+  source   = "../../modules/auth"
+  env      = "dev"
+  site_url = module.website.url
+}
+
 module "api" {
-  source    = "../../modules/api"
-  env       = "dev"
-  image_tag = var.scorer_image_tag
+  source            = "../../modules/api"
+  env               = "dev"
+  image_tag         = var.scorer_image_tag
+  state_machine_arn = module.automation.state_machine_arn
+  site_url          = module.website.url
+  jwt_issuer        = module.auth.issuer
+  jwt_audience      = module.auth.client_id
 }
 
 module "scan" {

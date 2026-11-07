@@ -52,11 +52,16 @@ resource "aws_iam_role_policy_attachment" "scorer_logs" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
-# Read/write only these two tables, nothing else in DynamoDB
+# Read/write only these two tables, and start the scan workflow ("Scan now")
 data "aws_iam_policy_document" "scorer_tables" {
   statement {
-    actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Scan"]
+    actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem", "dynamodb:Scan"]
     resources = [aws_dynamodb_table.brands.arn, aws_dynamodb_table.findings.arn]
+  }
+
+  statement {
+    actions   = ["states:StartExecution"]
+    resources = [var.state_machine_arn]
   }
 }
 
@@ -84,8 +89,9 @@ resource "aws_lambda_function" "scorer" {
   # Tells the code which tables to use
   environment {
     variables = {
-      BRANDS_TABLE   = aws_dynamodb_table.brands.name
-      FINDINGS_TABLE = aws_dynamodb_table.findings.name
+      BRANDS_TABLE      = aws_dynamodb_table.brands.name
+      FINDINGS_TABLE    = aws_dynamodb_table.findings.name
+      STATE_MACHINE_ARN = var.state_machine_arn
     }
   }
 
@@ -98,10 +104,25 @@ resource "aws_apigatewayv2_api" "this" {
   name          = "squatscope-${var.env}"
   protocol_type = "HTTP"
 
+  # Browsers may only call the API from the SquatScope website
   cors_configuration {
-    allow_origins = ["*"]
-    allow_methods = ["GET", "POST"]
-    allow_headers = ["content-type"]
+    allow_origins = [var.site_url]
+    allow_methods = ["GET", "POST", "DELETE"]
+    allow_headers = ["content-type", "authorization"]
+    max_age       = 3600
+  }
+}
+
+# Every route needs a valid Cognito login token (sent as "Authorization: Bearer ...")
+resource "aws_apigatewayv2_authorizer" "cognito" {
+  api_id           = aws_apigatewayv2_api.this.id
+  name             = "cognito"
+  authorizer_type  = "JWT"
+  identity_sources = ["$request.header.Authorization"]
+
+  jwt_configuration {
+    issuer   = var.jwt_issuer
+    audience = [var.jwt_audience]
   }
 }
 
@@ -119,12 +140,16 @@ resource "aws_apigatewayv2_route" "this" {
     "POST /score",
     "GET /brands",
     "POST /brands",
+    "DELETE /brands/{name}",
     "GET /findings",
+    "POST /scan",
   ])
 
-  api_id    = aws_apigatewayv2_api.this.id
-  route_key = each.value
-  target    = "integrations/${aws_apigatewayv2_integration.scorer.id}"
+  api_id             = aws_apigatewayv2_api.this.id
+  route_key          = each.value
+  target             = "integrations/${aws_apigatewayv2_integration.scorer.id}"
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.cognito.id
 }
 
 # The two routes used to be separate resources; tell Terraform they were renamed
